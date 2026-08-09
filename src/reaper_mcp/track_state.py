@@ -73,6 +73,25 @@ def set_track_soloed_value(track: TrackInfo, soloed: bool) -> bool:
     return get_track_soloed(track)
 
 
+def get_track_solo_state(track: TrackInfo) -> int:
+    """Return REAPER's complete I_SOLO state, including solo-in-place."""
+    return int(track.get_info_value("I_SOLO"))
+
+
+def set_track_solo_state(track: TrackInfo, solo_state: int) -> int:
+    track.set_info_value("I_SOLO", float(solo_state))
+    return get_track_solo_state(track)
+
+
+def get_track_armed(track: TrackInfo) -> bool:
+    return bool(track.get_info_value("I_RECARM"))
+
+
+def set_track_armed_value(track: TrackInfo, armed: bool) -> bool:
+    track.set_info_value("I_RECARM", 1.0 if armed else 0.0)
+    return get_track_armed(track)
+
+
 def get_item_name(item: ItemInfo) -> str:
     """Return REAPER's visible item name, which is owned by the active take."""
     if item.n_takes <= 0:

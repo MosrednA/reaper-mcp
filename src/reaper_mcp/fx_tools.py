@@ -1,6 +1,5 @@
 import logging
 
-import reapy
 from reapy import reascript_api as RPR
 
 from reaper_mcp.connection import get_project
@@ -21,13 +20,10 @@ def register_tools(mcp):
         try:
             project = get_project()
             track = project.tracks[track_index]
-            fx_index = track.add_fx(fx_name)
-            if fx_index < 0:
-                return {"success": False, "error": f"Plugin not found: '{fx_name}'"}
-            fx = track.fxs[fx_index]
+            fx = track.add_fx(fx_name)
             return {
                 "success": True,
-                "fx_index": fx_index,
+                "fx_index": fx.index,
                 "name": fx.name,
                 "n_params": fx.n_params,
                 "track_index": track_index,
@@ -143,13 +139,13 @@ def register_tools(mcp):
             project = get_project()
             track = project.tracks[track_index]
             fx = track.fxs[fx_index]
-            fx.preset_name = preset_name
+            fx.preset = preset_name
             return {
                 "success": True,
                 "track_index": track_index,
                 "fx_index": fx_index,
                 "fx_name": fx.name,
-                "preset": fx.preset_name,
+                "preset": fx.preset,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}

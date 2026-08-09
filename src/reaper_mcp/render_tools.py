@@ -1,11 +1,11 @@
-import os
 import logging
+import os
 from pathlib import Path
 
-import reapy
 from reapy import reascript_api as RPR
 
 from reaper_mcp.connection import get_project
+from reaper_mcp.track_state import get_track_solo_state, set_track_solo_state
 
 logger = logging.getLogger("reaper_mcp.render_tools")
 
@@ -127,7 +127,7 @@ def register_tools(mcp):
     @mcp.tool()
     def render_stems(
         output_directory: str,
-        track_indices: list = None,
+        track_indices: list | None = None,
         format: str = "wav",
         sample_rate: int = 48000,
         bit_depth: int = 24,
@@ -137,10 +137,15 @@ def register_tools(mcp):
         track_indices: list of track indices, or null to render all tracks.
         Files are named after the track names in the output directory.
         """
+        original_solo_states = None
+        project = None
         try:
             output_directory = str(Path(output_directory).expanduser().resolve())
             os.makedirs(output_directory, exist_ok=True)
             project = get_project()
+            original_solo_states = [
+                get_track_solo_state(project.tracks[i]) for i in range(project.n_tracks)
+            ]
             indices = track_indices if track_indices is not None else list(range(project.n_tracks))
             rendered = []
 
@@ -149,7 +154,7 @@ def register_tools(mcp):
                 track_name = track.name or f"Track_{idx}"
                 # Solo this track exclusively
                 for j in range(project.n_tracks):
-                    project.tracks[j].solo = (j == idx)
+                    set_track_solo_state(project.tracks[j], 1 if j == idx else 0)
                 # Sanitize filename
                 safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in track_name)
                 stem_path = os.path.join(output_directory, f"{safe_name}.{format}")
@@ -162,22 +167,15 @@ def register_tools(mcp):
                     "exists": os.path.exists(stem_path),
                 })
 
-            # Unsolo all tracks
-            for j in range(project.n_tracks):
-                project.tracks[j].solo = False
-
             return {
                 "success": True,
                 "output_directory": output_directory,
                 "stems": rendered,
             }
         except Exception as e:
-            # Always unsolo on error
-            try:
-                proj = get_project()
-                for j in range(proj.n_tracks):
-                    proj.tracks[j].solo = False
-            except Exception:
-                pass
             logger.error(f"render_stems failed: {e}")
             return {"success": False, "error": str(e)}
+        finally:
+            if project is not None and original_solo_states is not None:
+                for track, solo_state in zip(project.tracks, original_solo_states):
+                    set_track_solo_state(track, solo_state)

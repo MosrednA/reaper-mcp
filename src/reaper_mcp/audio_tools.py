@@ -1,10 +1,18 @@
-import os
 import logging
+import os
 
-import reapy
 from reapy import reascript_api as RPR
 
 from reaper_mcp.connection import get_project
+from reaper_mcp.media_state import (
+    get_take_start_offset,
+    set_item_fade_in,
+    set_item_fade_out,
+    set_take_pitch,
+    set_take_playback_rate,
+    set_take_start_offset,
+)
+from reaper_mcp.track_state import set_track_armed_value
 
 logger = logging.getLogger("reaper_mcp.audio_tools")
 
@@ -49,7 +57,7 @@ def register_tools(mcp):
         try:
             project = get_project()
             track = project.tracks[track_index]
-            track.armed = True
+            set_track_armed_value(track, True)
             RPR.Main_OnCommand(1013, 0)  # Transport: Record
             return {
                 "success": True,
@@ -112,16 +120,16 @@ def register_tools(mcp):
                 item.length -= start_trim
                 take = item.active_take
                 if take:
-                    take.start_offset += start_trim
+                    set_take_start_offset(take, get_take_start_offset(take) + start_trim)
 
             if end_trim > 0:
                 item.length -= end_trim
 
             if fade_in > 0:
-                item.fade_in_length = fade_in
+                set_item_fade_in(item, fade_in)
 
             if fade_out > 0:
-                item.fade_out_length = fade_out
+                set_item_fade_out(item, fade_out)
 
             return {
                 "success": True,
@@ -141,12 +149,12 @@ def register_tools(mcp):
             track = project.tracks[track_index]
             item = track.items[item_index]
             take = item.active_take
-            take.pitch = semitones
+            applied_pitch = set_take_pitch(take, semitones)
             return {
                 "success": True,
                 "track_index": track_index,
                 "item_index": item_index,
-                "pitch_semitones": take.pitch,
+                "pitch_semitones": applied_pitch,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -159,12 +167,12 @@ def register_tools(mcp):
             track = project.tracks[track_index]
             item = track.items[item_index]
             take = item.active_take
-            take.playback_rate = rate
+            applied_rate = set_take_playback_rate(take, rate)
             return {
                 "success": True,
                 "track_index": track_index,
                 "item_index": item_index,
-                "playback_rate": take.playback_rate,
+                "playback_rate": applied_rate,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}

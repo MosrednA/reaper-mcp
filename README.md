@@ -6,6 +6,7 @@ A Model Context Protocol (MCP) server that enables AI agents to control REAPER D
 
 - [REAPER](https://www.reaper.fm/) DAW installed and running
 - Python 3.10+
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) 2.x
 - REAPER's distant API enabled (see [Setup](#setting-up-reaper))
 
 ## Installation
@@ -63,6 +64,15 @@ claude mcp add reaper -- reaper-mcp-server
 ```bash
 reaper-mcp-server          # start the server
 reaper-mcp-server --debug  # with debug logging
+```
+
+## Development
+
+Install the editable package with its test tools, then run the regression suite:
+
+```bash
+pip install -e ".[dev]"
+pytest
 ```
 
 ## Tools (58)

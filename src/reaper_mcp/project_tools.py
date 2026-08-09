@@ -1,12 +1,12 @@
+import logging
 import os
 import time
-import logging
 from pathlib import Path
 
-import reapy
 from reapy import reascript_api as RPR
 
 from reaper_mcp.connection import get_project
+from reaper_mcp.project_state import get_project_time_signature, set_project_time_signature
 
 logger = logging.getLogger("reaper_mcp.project_tools")
 
@@ -22,7 +22,7 @@ def register_tools(mcp):
             project.bpm = tempo
             if time_signature:
                 num, denom = map(int, time_signature.split("/"))
-                project.time_signature = (num, denom)
+                set_project_time_signature(project, num, denom)
             return {
                 "success": True,
                 "name": name or f"New Project {time.strftime('%Y-%m-%d %H-%M-%S')}",
@@ -62,7 +62,7 @@ def register_tools(mcp):
                 "success": True,
                 "name": project.name,
                 "tempo": project.bpm,
-                "time_signature": f"{project.time_signature[0]}/{project.time_signature[1]}",
+                "time_signature": _format_time_signature(project),
                 "project_path": project_path,
             }
         except Exception as e:
@@ -95,7 +95,7 @@ def register_tools(mcp):
                 "name": project.name,
                 "path": project.path,
                 "tempo": project.bpm,
-                "time_signature": f"{project.time_signature[0]}/{project.time_signature[1]}",
+                "time_signature": _format_time_signature(project),
                 "length": project.length,
                 "track_count": project.n_tracks,
                 "markers": markers,
@@ -120,7 +120,17 @@ def register_tools(mcp):
         """Set the project time signature, e.g. 4/4, 3/4, 6/8."""
         try:
             project = get_project()
-            project.time_signature = (numerator, denominator)
-            return {"success": True, "time_signature": f"{numerator}/{denominator}"}
+            applied_numerator, applied_denominator = set_project_time_signature(
+                project, numerator, denominator
+            )
+            return {
+                "success": True,
+                "time_signature": f"{applied_numerator}/{applied_denominator}",
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+
+def _format_time_signature(project) -> str:
+    numerator, denominator = get_project_time_signature(project)
+    return f"{numerator}/{denominator}"
