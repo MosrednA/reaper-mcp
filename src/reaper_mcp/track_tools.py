@@ -1,9 +1,19 @@
 import logging
 
-import reapy
 from reapy import reascript_api as RPR
 
 from reaper_mcp.connection import get_project
+from reaper_mcp.track_state import (
+    get_item_name,
+    get_track_muted,
+    get_track_pan,
+    get_track_soloed,
+    get_track_volume_db,
+    set_track_muted_value,
+    set_track_pan_value,
+    set_track_soloed_value,
+    set_track_volume_db,
+)
 
 logger = logging.getLogger("reaper_mcp.track_tools")
 
@@ -65,8 +75,8 @@ def register_tools(mcp):
         try:
             project = get_project()
             track = project.tracks[track_index]
-            track.volume = volume_db
-            return {"success": True, "track_index": track_index, "volume_db": track.volume}
+            applied_db = set_track_volume_db(track, volume_db)
+            return {"success": True, "track_index": track_index, "volume_db": applied_db}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -76,8 +86,8 @@ def register_tools(mcp):
         try:
             project = get_project()
             track = project.tracks[track_index]
-            track.pan = pan
-            return {"success": True, "track_index": track_index, "pan": track.pan}
+            applied_pan = set_track_pan_value(track, pan)
+            return {"success": True, "track_index": track_index, "pan": applied_pan}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -87,8 +97,8 @@ def register_tools(mcp):
         try:
             project = get_project()
             track = project.tracks[track_index]
-            track.mute = muted
-            return {"success": True, "track_index": track_index, "muted": track.mute}
+            applied_muted = set_track_muted_value(track, muted)
+            return {"success": True, "track_index": track_index, "muted": applied_muted}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -98,8 +108,8 @@ def register_tools(mcp):
         try:
             project = get_project()
             track = project.tracks[track_index]
-            track.solo = soloed
-            return {"success": True, "track_index": track_index, "soloed": track.solo}
+            applied_soloed = set_track_soloed_value(track, soloed)
+            return {"success": True, "track_index": track_index, "soloed": applied_soloed}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -122,17 +132,17 @@ def register_tools(mcp):
                     "index": i,
                     "position": item.position,
                     "length": item.length,
-                    "name": item.name,
+                    "name": get_item_name(item),
                 })
 
             return {
                 "success": True,
                 "track_index": track_index,
                 "name": track.name,
-                "volume_db": track.volume,
-                "pan": track.pan,
-                "muted": track.mute,
-                "soloed": track.solo,
+                "volume_db": get_track_volume_db(track),
+                "pan": get_track_pan(track),
+                "muted": get_track_muted(track),
+                "soloed": get_track_soloed(track),
                 "fx_count": track.n_fxs,
                 "fx": fx_list,
                 "item_count": track.n_items,
@@ -152,10 +162,10 @@ def register_tools(mcp):
                 tracks.append({
                     "index": i,
                     "name": track.name,
-                    "volume_db": track.volume,
-                    "pan": track.pan,
-                    "muted": track.mute,
-                    "soloed": track.solo,
+                    "volume_db": get_track_volume_db(track),
+                    "pan": get_track_pan(track),
+                    "muted": get_track_muted(track),
+                    "soloed": get_track_soloed(track),
                     "fx_count": track.n_fxs,
                     "item_count": track.n_items,
                 })
