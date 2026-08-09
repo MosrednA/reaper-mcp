@@ -1,6 +1,8 @@
 import logging
 import os
 
+from reapy import reascript_api as RPR
+
 from reaper_mcp.connection import get_project
 from reaper_mcp.track_state import get_track_volume_db, set_track_volume_db
 
@@ -52,12 +54,13 @@ def register_tools(mcp):
             project = get_project()
             master = project.master_track
             fx = master.fxs[fx_index]
-            fx.params[param_index].normalized_value = value
+            param = fx.params[param_index]
+            RPR.TrackFX_SetParamNormalized(master.id, fx_index, param_index, value)
             return {
                 "success": True,
                 "fx_index": fx_index,
                 "param_index": param_index,
-                "param_name": fx.params[param_index].name,
+                "param_name": param.name,
                 "value": value,
             }
         except Exception as e:

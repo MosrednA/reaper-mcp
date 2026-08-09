@@ -98,6 +98,10 @@ pytest
 ### Rendering
 `render_project` `render_stems` `render_time_selection`
 
+Rendering uses REAPER's native sink configuration and preserves the project's
+existing render settings. Stem renders restore track solo states, and
+time-selection renders restore the original selection after completion or failure.
+
 ### Mastering
 `apply_mastering_chain` `apply_limiter` `normalize_project`
 

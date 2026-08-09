@@ -56,8 +56,9 @@ def register_tools(mcp):
             project = get_project()
             track = project.tracks[track_index]
             fx = track.fxs[fx_index]
-            fx.params[param_index].normalized_value = value
-            param_name = fx.params[param_index].name
+            param = fx.params[param_index]
+            RPR.TrackFX_SetParamNormalized(track.id, fx_index, param_index, value)
+            param_name = param.name
             return {
                 "success": True,
                 "track_index": track_index,
@@ -82,8 +83,8 @@ def register_tools(mcp):
                 params.append({
                     "index": i,
                     "name": param.name,
-                    "normalized_value": param.normalized_value,
-                    "formatted_value": param.formatted_value,
+                    "normalized_value": float(param.normalized),
+                    "formatted_value": param.formatted,
                 })
             return {
                 "success": True,

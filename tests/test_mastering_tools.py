@@ -19,14 +19,24 @@ class ToolRegistry:
 
 
 @dataclass
+class FakeParam:
+    name: str
+    normalized: float = 0.0
+
+
+@dataclass
 class FakeFx:
     index: int
     name: str
     n_params: int = 4
 
+    def __post_init__(self):
+        self.params = [FakeParam(f"Parameter {index}") for index in range(self.n_params)]
+
 
 class FakeMasterTrack:
     def __init__(self):
+        self.id = "master-id"
         self.fxs = []
         self.values = {"D_VOL": 1.0}
 
@@ -47,13 +57,20 @@ def registered_tools(monkeypatch):
     master = FakeMasterTrack()
     project = type("Project", (), {"master_track": master})()
     monkeypatch.setattr(mastering_tools, "get_project", lambda: project)
+    calls = []
+
+    def set_parameter(track_id, fx_index, param_index, value):
+        calls.append((track_id, fx_index, param_index, value))
+        master.fxs[fx_index].params[param_index].normalized = value
+
+    monkeypatch.setattr(mastering_tools.RPR, "TrackFX_SetParamNormalized", set_parameter)
     registry = ToolRegistry()
     mastering_tools.register_tools(registry)
-    return registry.tools, master
+    return registry.tools, master, calls
 
 
 def test_master_fx_tools_use_fx_object_returned_by_reapy(registered_tools):
-    tools, master = registered_tools
+    tools, master, _ = registered_tools
 
     added = tools["add_master_fx"]("ReaEQ")
     limited = tools["apply_limiter"]()
@@ -66,10 +83,22 @@ def test_master_fx_tools_use_fx_object_returned_by_reapy(registered_tools):
 
 
 def test_set_master_volume_uses_reaper_linear_gain(registered_tools):
-    tools, master = registered_tools
+    tools, master, _ = registered_tools
 
     result = tools["set_master_volume"](-9.0)
 
     assert result["success"] is True
     assert result["volume_db"] == pytest.approx(-9.0)
     assert master.values["D_VOL"] == pytest.approx(db_to_linear(-9.0))
+
+
+def test_set_master_fx_parameter_uses_reapy_normalized_property(registered_tools):
+    tools, master, calls = registered_tools
+    master.add_fx("ReaEQ")
+
+    result = tools["set_master_fx_parameter"](0, 2, 0.6)
+
+    assert result["success"] is True
+    assert result["param_name"] == "Parameter 2"
+    assert calls == [("master-id", 0, 2, 0.6)]
+    assert master.fxs[0].params[2].normalized == 0.6
