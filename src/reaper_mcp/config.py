@@ -1,3 +1,9 @@
+"""Unused upstream JSON-config helper; not loaded by the MCP server.
+
+Runtime configuration is owned by client process settings and tool arguments.
+See README.md before using these helpers as an application configuration API.
+"""
+
 import json
 import os
 from pathlib import Path

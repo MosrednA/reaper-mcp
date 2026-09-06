@@ -40,6 +40,8 @@ that every part is audible in every export.
 Install **this fork from source**. A plain `pip install reaper-mcp-server` does not
 select MosrednA's repository and must not be assumed to contain these changes.
 The distribution and executable retain the original `reaper-mcp-server` name.
+The package version remains `0.1.1`; use the Git commit (`git rev-parse HEAD`) to
+identify this fork revision. That version alone does not identify the fork fixes.
 
 ```bash
 git clone https://github.com/MosrednA/reaper-mcp.git
@@ -162,6 +164,16 @@ Use the `mcpServers` JSON example above in `claude_desktop_config.json`.
 ```bash
 claude mcp add reaper -- "/absolute/path/reaper-mcp/.venv/bin/python" -m reaper_mcp
 ```
+
+### Legacy Smithery descriptor
+
+[smithery.yaml](smithery.yaml) is a local `startCommand` descriptor for clients
+that still support that format. Set `pythonExecutable` to the absolute Python
+path from the installation above. The interpreter must already have this fork
+installed, and REAPER must run on the same machine. The descriptor does not
+install dependencies, configure REAPER, or prove a published Smithery listing.
+Use the generic STDIO setup above for other clients. Current Smithery publishing
+is a separate workflow; see the [Smithery documentation](https://smithery.ai/docs).
 
 ### Standalone
 

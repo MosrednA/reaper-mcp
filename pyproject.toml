@@ -12,6 +12,7 @@ license = { text = "MIT" }
 authors = [
     { name = "Youssef Hemimy", email = "itsuzef@users.noreply.github.com" },
 ]
+maintainers = [{ name = "MosrednA" }]
 keywords = ["mcp", "reaper", "daw", "audio", "music", "midi", "mastering", "mixing"]
 classifiers = [
     "Development Status :: 3 - Alpha",

@@ -1,14 +1,24 @@
-# Smithery configuration file for REAPER MCP
+# Legacy Smithery startCommand descriptor for clients supporting this format.
+# Local execution only: REAPER and its distant API must run on the same machine.
+# Install MosrednA/reaper-mcp into this interpreter's environment first.
+# This file does not install the package or publish a Smithery listing.
 
 startCommand:
   type: stdio
   configSchema:
     type: object
-    properties: {}
-  commandFunction:
-    |-
+    additionalProperties: false
+    required:
+      - pythonExecutable
+    properties:
+      pythonExecutable:
+        type: string
+        minLength: 1
+        description: Absolute path to the Python interpreter with this fork installed.
+  commandFunction: |-
     (config) => ({
-      command: 'reaper-mcp-server',
-      args: []
+      command: config.pythonExecutable,
+      args: ['-m', 'reaper_mcp']
     })
-  exampleConfig: {}
+  exampleConfig:
+    pythonExecutable: /absolute/path/reaper-mcp/.venv/bin/python
