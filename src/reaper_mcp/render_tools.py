@@ -1,10 +1,12 @@
 import base64
 import logging
+import math
 import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import soundfile as sf
 from reapy import reascript_api as RPR
 
 from reaper_mcp.connection import get_project
@@ -156,21 +158,47 @@ def _render_file(
 
     snapshot = _capture_render_settings()
     path: Path | None = None
+    destination = _validated_output_path(output_path, format_name)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    handle, staging = tempfile.mkstemp(
+        prefix=".reaper-render-", suffix=destination.suffix, dir=destination.parent
+    )
+    os.close(handle)
+    Path(staging).unlink()
     try:
         path = _set_render_settings(
-            output_path, format_name, sample_rate, bit_depth, channels, bounds
+            staging, format_name, sample_rate, bit_depth, channels, bounds
         )
-        path.unlink(missing_ok=True)
+        # These separate distant calls let REAPER process pending media/routing
+        # updates. Never render inside an inside_reaper HOLD batch or reload a
+        # user's project as an implicit workaround.
+        _prepare_render()
         RPR.Main_OnCommand(41824, 0)  # File: Render project, using recent settings
-        if not path.exists():
+        if not path.exists() or path.stat().st_size == 0:
             raise RuntimeError("Render command completed but output file was not created")
-        return path
+        info = sf.info(str(path))
+        if info.frames <= 0 or info.samplerate != sample_rate or info.channels != channels:
+            raise RuntimeError("Rendered audio is empty or has unexpected rate/channels")
     except Exception:
         if path is not None:
             path.unlink(missing_ok=True)
         raise
     finally:
-        _restore_render_settings(snapshot)
+        try:
+            _restore_render_settings(snapshot)
+        except Exception:
+            Path(staging).unlink(missing_ok=True)
+            raise
+    os.replace(path, destination)
+    return destination
+
+
+def _prepare_render() -> None:
+    if RPR.GetPlayState() & 4:
+        raise RuntimeError("Stop recording before rendering")
+    RPR.TrackList_AdjustWindows(False)
+    RPR.UpdateTimeline()
+    RPR.UpdateArrange()
 
 
 def render_to_temp_file(sample_rate: int = 48000) -> str:
@@ -230,7 +258,7 @@ def register_tools(mcp):
                 "file_size_bytes": path.stat().st_size,
             }
         except Exception as e:
-            logger.error(f"render_project failed: {e}")
+            logger.exception("render_project failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
@@ -247,10 +275,11 @@ def register_tools(mcp):
         project = None
         original_selection = None
         try:
-            if end <= start:
+            if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
                 raise ValueError("end must be greater than start")
             project = get_project()
-            original_selection = project.time_selection
+            selection = project.time_selection
+            original_selection = (float(selection.start), float(selection.end))
             project.time_selection = (start, end)
             path = _render_file(
                 output_path,
@@ -269,7 +298,7 @@ def register_tools(mcp):
                 "file_size_bytes": path.stat().st_size,
             }
         except Exception as e:
-            logger.error(f"render_time_selection failed: {e}")
+            logger.exception("render_time_selection failed")
             return {"success": False, "error": str(e)}
         finally:
             if project is not None and original_selection is not None:
@@ -278,7 +307,7 @@ def register_tools(mcp):
     @mcp.tool()
     def render_stems(
         output_directory: str,
-        track_indices: list | None = None,
+        track_indices: list[int] | None = None,
         format: str = "wav",
         sample_rate: int = 48000,
         bit_depth: int = 24,
@@ -298,6 +327,10 @@ def register_tools(mcp):
                 get_track_solo_state(project.tracks[i]) for i in range(project.n_tracks)
             ]
             indices = track_indices if track_indices is not None else list(range(project.n_tracks))
+            if len(set(indices)) != len(indices) or any(
+                not 0 <= idx < project.n_tracks for idx in indices
+            ):
+                raise ValueError("Stem indices must be unique and in range")
             rendered = []
 
             for idx in indices:
@@ -311,7 +344,7 @@ def register_tools(mcp):
                     c if c.isalnum() or c in " _-" else "_" for c in track_name
                 )
                 path = _render_file(
-                    str(directory / f"{safe_name}.{format.lower()}"),
+                    str(directory / f"{idx + 1:02d}-{safe_name}.{format.lower()}"),
                     format,
                     sample_rate,
                     bit_depth,
@@ -331,7 +364,7 @@ def register_tools(mcp):
                 "stems": rendered,
             }
         except Exception as e:
-            logger.error(f"render_stems failed: {e}")
+            logger.exception("render_stems failed")
             return {"success": False, "error": str(e)}
         finally:
             if project is not None and original_solo_states is not None:

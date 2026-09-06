@@ -6,7 +6,13 @@ from pathlib import Path
 from reapy import reascript_api as RPR
 
 from reaper_mcp.connection import get_project
-from reaper_mcp.project_state import get_project_time_signature, set_project_time_signature
+from reaper_mcp.project_state import (
+    current_project_file,
+    get_project_time_signature,
+    project_markers,
+    set_project_time_signature,
+    write_project,
+)
 
 logger = logging.getLogger("reaper_mcp.project_tools")
 
@@ -30,24 +36,51 @@ def register_tools(mcp):
                 "time_signature": time_signature,
             }
         except Exception as e:
-            logger.error(f"create_project failed: {e}")
+            logger.exception("create_project failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
     def save_project(project_path: str = "") -> dict:
-        """Save the current project. If no path is given, saves to ~/Documents/REAPER Projects."""
+        """Save in place, or Save As to project_path and make that the active filename.
+
+        Untitled projects require a path. Use save_project_copy for a snapshot.
+        """
         try:
             project = get_project()
-            if not project_path:
-                proj_name = project.name or f"Project {time.strftime('%Y-%m-%d %H-%M-%S')}"
-                default_dir = Path.home() / "Documents" / "REAPER Projects"
-                os.makedirs(default_dir, exist_ok=True)
-                project_path = str(default_dir / f"{proj_name}.rpp")
-            os.makedirs(os.path.dirname(os.path.abspath(project_path)), exist_ok=True)
-            project.save(project_path)
-            return {"success": True, "project_path": project_path}
+            filename = project_path or current_project_file()
+            if not filename:
+                raise ValueError("Untitled project: provide project_path")
+            path = Path(filename).expanduser().resolve()
+            if path.suffix.lower() != ".rpp":
+                raise ValueError("project_path must end in .rpp")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_project(project.id, path, 8)
+            active = current_project_file()
+            if not active or Path(active).resolve() != path:
+                raise RuntimeError("Project written, but active filename did not change")
+            return {"success": True, "project_path": str(path), "active_project_path": active}
         except Exception as e:
-            logger.error(f"save_project failed: {e}")
+            logger.exception("save_project failed")
+            return {"success": False, "error": str(e)}
+
+    @mcp.tool()
+    def save_project_copy(project_path: str) -> dict:
+        """Write an RPP snapshot without changing the active project's filename."""
+        try:
+            project = get_project()
+            path = Path(project_path).expanduser().resolve()
+            if not project_path or path.suffix.lower() != ".rpp":
+                raise ValueError("Provide a .rpp project_path")
+            active = current_project_file()
+            if active and Path(active).resolve() == path:
+                raise ValueError("Use save_project to save the active file")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_project(project.id, path, 0)
+            if current_project_file() != active:
+                raise RuntimeError("Copy written, but active project unexpectedly changed")
+            return {"success": True, "project_path": str(path), "active_project_path": active}
+        except Exception as e:
+            logger.exception("REAPER operation failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
@@ -66,7 +99,7 @@ def register_tools(mcp):
                 "project_path": project_path,
             }
         except Exception as e:
-            logger.error(f"load_project failed: {e}")
+            logger.exception("load_project failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
@@ -74,26 +107,15 @@ def register_tools(mcp):
         """Get information about the current project: name, path, tempo, tracks, length."""
         try:
             project = get_project()
-            markers = []
-            try:
-                for i in range(project.n_markers):
-                    m = project.markers[i]
-                    markers.append({"index": i, "name": m.name, "position": m.position})
-            except Exception:
-                pass
-
-            regions = []
-            try:
-                for i in range(project.n_regions):
-                    r = project.regions[i]
-                    regions.append({"index": i, "name": r.name, "start": r.start, "end": r.end})
-            except Exception:
-                pass
+            markers, regions = project_markers(project.id)
+            filename = current_project_file()
 
             return {
                 "success": True,
                 "name": project.name,
-                "path": project.path,
+                "path": str(Path(filename).parent) if filename else "",
+                "project_path": filename,
+                "media_path": project.path,
                 "tempo": project.bpm,
                 "time_signature": _format_time_signature(project),
                 "length": project.length,
@@ -102,7 +124,7 @@ def register_tools(mcp):
                 "regions": regions,
             }
         except Exception as e:
-            logger.error(f"get_project_info failed: {e}")
+            logger.exception("get_project_info failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
@@ -113,6 +135,7 @@ def register_tools(mcp):
             project.bpm = bpm
             return {"success": True, "tempo": project.bpm}
         except Exception as e:
+            logger.exception("REAPER operation failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
@@ -128,6 +151,7 @@ def register_tools(mcp):
                 "time_signature": f"{applied_numerator}/{applied_denominator}",
             }
         except Exception as e:
+            logger.exception("REAPER operation failed")
             return {"success": False, "error": str(e)}
 
 

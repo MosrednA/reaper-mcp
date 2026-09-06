@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 import pytest
@@ -52,6 +53,7 @@ class FakeTrack:
 
 @pytest.fixture
 def registered_tools(monkeypatch):
+    monkeypatch.setattr(fx_tools.reapy, "inside_reaper", nullcontext)
     track = FakeTrack()
     project = type("Project", (), {"tracks": [track]})()
     monkeypatch.setattr(fx_tools, "get_project", lambda: project)
@@ -60,6 +62,7 @@ def registered_tools(monkeypatch):
     def set_parameter(track_id, fx_index, param_index, value):
         calls.append((track_id, fx_index, param_index, value))
         track.fxs[fx_index].params[param_index].normalized = value
+        return True
 
     monkeypatch.setattr(fx_tools.RPR, "TrackFX_SetParamNormalized", set_parameter)
     registry = ToolRegistry()
@@ -110,3 +113,31 @@ def test_fx_parameters_use_reapy_normalized_and_formatted_properties(registered_
     assert updated["param_name"] == "Resonance"
     assert calls == [("track-id", 0, 1, 0.75)]
     assert track.fxs[0].params[1].normalized == 0.75
+
+
+def test_parameter_filter_and_raw_cursor(registered_tools):
+    tools, track, _ = registered_tools
+    fx = track.add_fx("Synth")
+    fx.params[1].name = "MIDI CC 1|0"
+    page = tools["get_fx_parameters"](0, 0, limit=1)
+    assert page["next_offset"] == 1
+    page = tools["get_fx_parameters"](0, 0, offset=1, name_filter="drive")
+    assert [p["index"] for p in page["parameters"]] == [2]
+    assert page["next_offset"] is None
+
+
+def test_batch_validation_happens_before_writes(registered_tools):
+    tools, track, calls = registered_tools
+    track.add_fx("Synth")
+    result = tools["set_fx_parameters"](0, 0, [
+        {"param_index":0,"value":.5}, {"param_index":10,"value":.5}])
+    assert result["success"] is False
+    assert calls == []
+
+
+def test_batch_returns_actual_values(registered_tools):
+    tools, track, _ = registered_tools
+    track.add_fx("Synth")
+    result = tools["set_fx_parameters"](0, 0, [{"param_index":0,"value":.6}])
+    assert result["success"] is True
+    assert result["parameters"][0]["value"] == .6

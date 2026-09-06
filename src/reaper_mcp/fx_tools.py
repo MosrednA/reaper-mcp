@@ -1,10 +1,18 @@
 import logging
 
+import reapy
+from pydantic import BaseModel, ConfigDict, Field
 from reapy import reascript_api as RPR
 
 from reaper_mcp.connection import get_project
 
 logger = logging.getLogger("reaper_mcp.fx_tools")
+
+
+class ParameterChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    param_index: int = Field(ge=0, strict=True)
+    value: float = Field(ge=0, le=1, allow_inf_nan=False)
 
 
 def register_tools(mcp):
@@ -29,7 +37,7 @@ def register_tools(mcp):
                 "track_index": track_index,
             }
         except Exception as e:
-            logger.error(f"add_fx failed: {e}")
+            logger.exception("add_fx failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
@@ -42,6 +50,7 @@ def register_tools(mcp):
             RPR.TrackFX_Delete(track.id, fx_index)
             return {"success": True, "track_index": track_index, "removed": fx_name}
         except Exception as e:
+            logger.exception("REAPER operation failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
@@ -53,11 +62,17 @@ def register_tools(mcp):
         Use get_fx_parameters to discover available parameters and their indices.
         """
         try:
+            change = ParameterChange(param_index=param_index, value=value)
+            if track_index < 0 or fx_index < 0:
+                raise ValueError("Indices must be nonnegative")
             project = get_project()
             track = project.tracks[track_index]
             fx = track.fxs[fx_index]
             param = fx.params[param_index]
-            RPR.TrackFX_SetParamNormalized(track.id, fx_index, param_index, value)
+            if not RPR.TrackFX_SetParamNormalized(
+                track.id, fx_index, change.param_index, change.value
+            ):
+                raise RuntimeError("REAPER rejected the parameter value")
             param_name = param.name
             return {
                 "success": True,
@@ -65,35 +80,97 @@ def register_tools(mcp):
                 "fx_index": fx_index,
                 "param_index": param_index,
                 "param_name": param_name,
-                "value": value,
+                "value": float(param.normalized),
+                "requested_value": value,
             }
         except Exception as e:
+            logger.exception("REAPER operation failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
-    def get_fx_parameters(track_index: int, fx_index: int) -> dict:
-        """Get all parameters for an FX plugin, including names, indices, and current values."""
+    def get_fx_parameters(
+        track_index: int, fx_index: int, offset: int = 0, limit: int = 128,
+        name_filter: str = "", include_midi_cc: bool = False,
+    ) -> dict:
+        """Read a bounded parameter page. offset/next_offset are raw plugin indices.
+
+        MIDI CC parameters are excluded by default. name_filter is a case-insensitive
+        substring. Read values only for matches; limit is at most 256.
+        """
         try:
+            if track_index < 0 or fx_index < 0 or offset < 0 or not 1 <= limit <= 256:
+                raise ValueError("Nonnegative indices/offset and limit 1–256 required")
             project = get_project()
             track = project.tracks[track_index]
             fx = track.fxs[fx_index]
             params = []
-            for i in range(fx.n_params):
-                param = fx.params[i]
-                params.append({
-                    "index": i,
-                    "name": param.name,
-                    "normalized_value": float(param.normalized),
-                    "formatted_value": param.formatted,
-                })
+            i = min(offset, fx.n_params)
+            with reapy.inside_reaper():
+                while i < fx.n_params and len(params) < limit:
+                    param = fx.params[i]
+                    name = param.name
+                    index = i
+                    i += 1
+                    if not include_midi_cc and name.casefold().startswith("midi cc"):
+                        continue
+                    if name_filter.casefold() not in name.casefold():
+                        continue
+                    params.append({"index": index, "name": name,
+                                   "normalized_value": float(param.normalized),
+                                   "formatted_value": param.formatted})
             return {
                 "success": True,
                 "track_index": track_index,
                 "fx_index": fx_index,
                 "fx_name": fx.name,
                 "parameters": params,
+                "total_parameters": fx.n_params,
+                "next_offset": i if i < fx.n_params else None,
             }
         except Exception as e:
+            logger.exception("REAPER operation failed")
+            return {"success": False, "error": str(e)}
+
+    @mcp.tool()
+    def set_fx_parameters(
+        track_index: int, fx_index: int, changes: list[ParameterChange]
+    ) -> dict:
+        """Set a validated batch of normalized parameters with readback and rollback.
+
+        Returned values are actual plugin values, which may be quantized.
+        """
+        try:
+            changes = [ParameterChange.model_validate(c) for c in changes]
+            if track_index < 0 or fx_index < 0 or not 1 <= len(changes) <= 256:
+                raise ValueError("Nonnegative indices and 1–256 changes required")
+            if len({c.param_index for c in changes}) != len(changes):
+                raise ValueError("Duplicate parameter indices")
+            track = get_project().tracks[track_index]
+            fx = track.fxs[fx_index]
+            if any(c.param_index >= fx.n_params for c in changes):
+                raise ValueError("Parameter index out of range")
+            with reapy.inside_reaper():
+                before = {c.param_index: float(fx.params[c.param_index].normalized)
+                          for c in changes}
+                try:
+                    result = []
+                    for c in changes:
+                        if not RPR.TrackFX_SetParamNormalized(
+                            track.id, fx_index, c.param_index, c.value
+                        ):
+                            raise RuntimeError(f"REAPER rejected parameter {c.param_index}")
+                        result.append({"index": c.param_index,
+                                       "name": fx.params[c.param_index].name,
+                                       "requested_value": c.value,
+                                       "value": float(fx.params[c.param_index].normalized)})
+                except Exception:
+                    for index, value in before.items():
+                        if not RPR.TrackFX_SetParamNormalized(track.id, fx_index, index, value):
+                            raise RuntimeError("Parameter update failed; rollback also failed")
+                    raise
+            return {"success": True, "parameters": result}
+        except Exception as e:
+            logger.exception("REAPER operation failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
@@ -113,6 +190,7 @@ def register_tools(mcp):
                 })
             return {"success": True, "track_index": track_index, "fx": fx_list}
         except Exception as e:
+            logger.exception("REAPER operation failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
@@ -131,6 +209,7 @@ def register_tools(mcp):
                 "bypassed": bypassed,
             }
         except Exception as e:
+            logger.exception("REAPER operation failed")
             return {"success": False, "error": str(e)}
 
     @mcp.tool()
@@ -149,4 +228,5 @@ def register_tools(mcp):
                 "preset": fx.preset,
             }
         except Exception as e:
+            logger.exception("REAPER operation failed")
             return {"success": False, "error": str(e)}

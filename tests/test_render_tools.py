@@ -1,5 +1,9 @@
 import base64
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import soundfile as sf
 
 from reaper_mcp import render_tools
 
@@ -32,7 +36,15 @@ class FakeProject:
     def __init__(self):
         self.tracks = [FakeTrack("Lead", 2), FakeTrack("Bass", 0)]
         self.length = 8.0
-        self.time_selection = (1.0, 3.0)
+        self._time_selection = (1.0, 3.0)
+
+    @property
+    def time_selection(self):
+        return SimpleNamespace(start=self._time_selection[0], end=self._time_selection[1])
+
+    @time_selection.setter
+    def time_selection(self, value):
+        self._time_selection = tuple(value)
 
     @property
     def n_tracks(self):
@@ -109,6 +121,7 @@ def test_sink_formats_use_reaper_fourcc_contract():
 
 
 def test_render_file_restores_all_user_render_settings(monkeypatch, tmp_path):
+    monkeypatch.setattr(render_tools, "_prepare_render", lambda: None)
     project = FakeProject()
     rpr = FakeRpr()
     initial_strings = dict(rpr.strings)
@@ -120,7 +133,8 @@ def test_render_file_restores_all_user_render_settings(monkeypatch, tmp_path):
     output = tmp_path / "analysis.wav"
 
     def render(*_):
-        output.write_bytes(b"RIFFtest")
+        staging = Path(rpr.strings["RENDER_FILE"]) / (rpr.strings["RENDER_PATTERN"] + ".wav")
+        sf.write(staging, [[0., 0.]] * 48, 48000)
 
     monkeypatch.setattr(render_tools.RPR, "Main_OnCommand", render)
 
@@ -175,4 +189,44 @@ def test_time_selection_render_restores_original_selection(monkeypatch, tmp_path
     )
 
     assert result["success"] is True
-    assert project.time_selection == (1.0, 3.0)
+    assert project._time_selection == (1.0, 3.0)
+
+
+def test_failed_render_keeps_previous_export_and_restores_settings(monkeypatch, tmp_path):
+    project, rpr = FakeProject(), FakeRpr()
+    original = dict(rpr.strings), dict(rpr.numbers)
+    monkeypatch.setattr(render_tools, "get_project", lambda: project)
+    monkeypatch.setattr(render_tools, "_prepare_render", lambda: None)
+    monkeypatch.setattr(render_tools.RPR, "GetSetProjectInfo_String", rpr.get_set_string)
+    monkeypatch.setattr(render_tools.RPR, "GetSetProjectInfo", rpr.get_set_number)
+    def fail(*_):
+        raise RuntimeError("render failure")
+    monkeypatch.setattr(render_tools.RPR, "Main_OnCommand", fail)
+    destination = tmp_path / "previous.wav"
+    destination.write_bytes(b"KEEP THIS EXPORT")
+    with pytest.raises(RuntimeError, match="render failure"):
+        render_tools._render_file(str(destination), "wav", 48000,24,2,1)
+    assert destination.read_bytes() == b"KEEP THIS EXPORT"
+    assert (rpr.strings,rpr.numbers) == original
+    assert list(tmp_path.iterdir()) == [destination]
+
+
+def test_time_selection_restored_after_render_exception(monkeypatch,tmp_path):
+    project = FakeProject()
+    monkeypatch.setattr(render_tools,"get_project",lambda:project)
+    def fail(*_):
+        raise RuntimeError("failed")
+    monkeypatch.setattr(render_tools,"_render_file",fail)
+    registry=ToolRegistry()
+    render_tools.register_tools(registry)
+    assert not registry.tools['render_time_selection'](str(tmp_path/'x.wav'),4,6)['success']
+    assert project._time_selection == (1.,3.)
+
+
+def test_render_preparation_does_not_change_mute_or_solo(monkeypatch):
+    calls=[]
+    monkeypatch.setattr(render_tools.RPR,'GetPlayState',lambda:0)
+    for name in ['TrackList_AdjustWindows','UpdateTimeline','UpdateArrange']:
+        monkeypatch.setattr(render_tools.RPR,name,lambda *_,name=name:calls.append(name))
+    render_tools._prepare_render()
+    assert calls == ['TrackList_AdjustWindows','UpdateTimeline','UpdateArrange']
