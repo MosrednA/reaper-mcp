@@ -226,7 +226,17 @@ def test_time_selection_restored_after_render_exception(monkeypatch,tmp_path):
 def test_render_preparation_does_not_change_mute_or_solo(monkeypatch):
     calls=[]
     monkeypatch.setattr(render_tools.RPR,'GetPlayState',lambda:0)
+    monkeypatch.setattr(render_tools.RPR,'Main_OnCommand',lambda command,flag:calls.append((command,flag)))
     for name in ['TrackList_AdjustWindows','UpdateTimeline','UpdateArrange']:
         monkeypatch.setattr(render_tools.RPR,name,lambda *_,name=name:calls.append(name))
     render_tools._prepare_render()
-    assert calls == ['TrackList_AdjustWindows','UpdateTimeline','UpdateArrange']
+    assert calls == [(40101,0),'TrackList_AdjustWindows','UpdateTimeline','UpdateArrange']
+
+
+def test_recording_rejected_before_media_or_transport_changes(monkeypatch):
+    monkeypatch.setattr(render_tools.RPR, "GetPlayState", lambda: 5)
+    def unexpected(*_):
+        pytest.fail("Recording must be rejected before changing media state")
+    monkeypatch.setattr(render_tools.RPR, "Main_OnCommand", unexpected)
+    with pytest.raises(RuntimeError, match="Stop recording"):
+        render_tools._prepare_render()

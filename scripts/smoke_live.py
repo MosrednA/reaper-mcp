@@ -86,7 +86,13 @@ def main():
         check=call('check_project')
         assert check['note_count'] == 2 and check['issues'] == []
         get_project().time_selection=(.25,.5)
+        RPR.Main_OnCommand(40100, 0)  # Intentionally offline: preparation must recover audio
         call('render_stems',output_directory=str(out/'stems'))
+        drum_stem = results['render_stems']['stems'][1]['output_path']
+        stem_audio, stem_rate = sf.read(drum_stem, always_2d=True)
+        stem_window = stem_audio[int(2*stem_rate):int(2.08*stem_rate)]
+        assert np.sqrt(np.mean(stem_window*stem_window)) > .01, 'Offline drum missing in stem'
+        RPR.Main_OnCommand(40100, 0)  # Exercise recovery again for the full mix
         call('render_time_selection',output_path=str(out/'full.wav'),start=0.,end=3.)
         selection=get_project().time_selection
         assert (selection.start,selection.end)==(.25,.5)
@@ -97,6 +103,7 @@ def main():
         synth=audio[int(1.25*rate):int(1.5*rate)]
         assert np.sqrt(np.mean(drum*drum))>.01, 'Drum missing after stem renders'
         assert np.sqrt(np.mean(synth*synth))>.001, 'MIDI synth missing'
+        results['offline_media_recovery'] = True
         results['audio_check']={'drum_rms':float(np.sqrt(np.mean(drum*drum))),
                                 'synth_rms':float(np.sqrt(np.mean(synth*synth)))}
         call('save_project')

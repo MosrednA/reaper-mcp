@@ -196,6 +196,10 @@ def _render_file(
 def _prepare_render() -> None:
     if RPR.GetPlayState() & 4:
         raise RuntimeError("Stop recording before rendering")
+    # Offline PCM sources produce valid but silent files even in native renders.
+    # Bring project media online without starting playback or changing the mix.
+    # This is a native REAPER action; SWS is not required.
+    RPR.Main_OnCommand(40101, 0)  # Item: Set all media online
     RPR.TrackList_AdjustWindows(False)
     RPR.UpdateTimeline()
     RPR.UpdateArrange()

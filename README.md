@@ -16,13 +16,14 @@ verification. It works with MCP clients that can launch a local **STDIO** server
 | [MCP 2 and reapy compatibility](https://github.com/MosrednA/reaper-mcp/commit/631df95) | MCP 2 server registration; corrected media, FX, project and mastering API usage, with regression tests. |
 | [FX and native rendering](https://github.com/MosrednA/reaper-mcp/commit/7aedd6a) | Normalized FX parameters, native audio sink settings, render validation and restoration of project settings. |
 | [Connection validation](https://github.com/MosrednA/reaper-mcp/commit/5554cc3) | Verify that the distant API really exposes the required functions; reconnect a stale session and report actionable errors. |
+| [Offline media recovery](#render-limitations) | Bring project media online before rendering; regression check deliberately offlines samples before stems and the full mix. |
 | [Music workflow fixes](https://github.com/MosrednA/reaper-mcp/commit/fb9c641) | Correct Save As and separate Save Copy; real project/marker metadata; MIDI batches with relative timing and rollback; bounded FX queries and parameter batches; serialized tool calls; safer exports and structural preflight. |
 
 The latest workflow update adds five tools: `save_project_copy`, `create_midi_part`,
 `add_midi_notes`, `set_fx_parameters`, and `check_project` (58 → 63 tools).
-Its regression suite passed **49 tests**, plus a live disposable-project check of
+The current regression suite passes **50 tests**, plus a live disposable-project check of
 saving, MIDI, FX, stems and a synth/drum render. See [render limitations](#render-limitations)
-for an issue still observed in larger music sessions; these fixes do not guarantee
+for the remaining uncertainty around earlier larger-session failures; these fixes do not guarantee
 that every part is audible in every export.
 
 ## Requirements
@@ -89,13 +90,15 @@ must be installed or accessible on the same machine running REAPER.
 ### Any local STDIO MCP client
 
 In your client's MCP settings, add a local server using these values. Replace the
-example checkout location with your actual path.
+placeholder checkout location (`C:/path/to/reaper-mcp` or
+`/absolute/path/reaper-mcp`) with your actual clone directory. These are examples,
+not required installation locations.
 
 | Field | Value |
 |---|---|
 | Name | `reaper` |
 | Transport/type | `stdio` / local process |
-| Command on Windows | `C:\Projects\reaper-mcp\.venv\Scripts\python.exe` |
+| Command on Windows | `C:\path\to\reaper-mcp\.venv\Scripts\python.exe` |
 | Command on macOS/Linux | `/absolute/path/reaper-mcp/.venv/bin/python` |
 | Arguments | `-m`, `reaper_mcp` (two separate arguments) |
 | Working directory | Optional when using the absolute interpreter path and editable install |
@@ -113,7 +116,7 @@ For clients using the common `mcpServers` JSON shape:
 {
   "mcpServers": {
     "reaper": {
-      "command": "C:/Projects/reaper-mcp/.venv/Scripts/python.exe",
+      "command": "C:/path/to/reaper-mcp/.venv/Scripts/python.exe",
       "args": ["-m", "reaper_mcp"]
     }
   }
@@ -130,17 +133,19 @@ REAPER project. `check_project` can then check its structure without editing it.
 
 ### Codex example
 
-Register the Windows example using the CLI:
+From the repository directory, register the installed Windows environment using
+the CLI (the resolved path also works when it contains spaces):
 
 ```powershell
-codex mcp add reaper -- C:/Projects/reaper-mcp/.venv/Scripts/python.exe -m reaper_mcp
+$reaperPython = (Resolve-Path .\.venv\Scripts\python.exe).Path
+codex mcp add reaper -- $reaperPython -m reaper_mcp
 ```
 
 Or add the corresponding entry to your Codex `config.toml`:
 
 ```toml
 [mcp_servers.reaper]
-command = "C:/Projects/reaper-mcp/.venv/Scripts/python.exe"
+command = "C:/path/to/reaper-mcp/.venv/Scripts/python.exe"
 args = ["-m", "reaper_mcp"]
 tool_timeout_sec = 300
 ```
@@ -155,7 +160,7 @@ Use the `mcpServers` JSON example above in `claude_desktop_config.json`.
 ### With Claude Code
 
 ```bash
-claude mcp add reaper -- C:/Projects/reaper-mcp/.venv/Scripts/python.exe -m reaper_mcp
+claude mcp add reaper -- "/absolute/path/reaper-mcp/.venv/bin/python" -m reaper_mcp
 ```
 
 ### Standalone
@@ -237,8 +242,11 @@ time-selection renders restore the original selection after completion or failur
 
 Rendering preserves the chosen mute/solo mix. It does not silently unmute tracks
 or reload the project. REAPER timeline/routing updates are flushed through separate
-distant calls before the render action, outside held API batches. Recording must
-be stopped before rendering. Exports go to a temporary sibling file, are checked
+distant calls before the render action, outside held API batches. Before every
+render, the native `Item: Set all media online` action reopens project
+media, including media previously set offline. This does not start playback or
+change FX offline states. No SWS extension is required. Recording must be stopped
+before rendering. Exports go to a temporary sibling file, are checked
 for readable nonempty audio and expected rate/channels, then replace the requested
 file. Failed renders leave a previous export intact. Stem filenames include a
 track-number prefix so duplicate names cannot overwrite each other.
@@ -257,22 +265,31 @@ prove every part is audible.
 
 ### Render limitations
 
-In larger Windows music sessions, an export could still omit sample-based drums
-after media/routing or solo changes, even with valid media and a successful render
-response. Reloading alone did not consistently resolve it. Briefly playing a
-populated passage, stopping, and then rendering restored the drum contribution in
-the checked sessions. This is an observed workaround, not an identified root-cause fix.
+A reproduced failure is fixed: REAPER's native render action can successfully write
+an entirely silent WAV when PCM media is offline. The MCP now brings project media
+online before master, selection, stem, and analysis renders. A disposable project
+with eight directly constructed kick items routed through a bus rendered at RMS
+0.26193 online and exactly 0 offline; bringing it online restored the same samples.
 
-The MCP does **not** perform that playback automatically. Check important parts in
-the actual full export; a nonempty WAV, no clipping, and `check_project` success are
-not proof of a complete audible mix. Solo/stem exports can encounter the same issue.
+The earlier intermittent missing-drums problem in larger Windows sessions is not
+fully attributed to that condition. After restarting REAPER, a large
+project copy with 1935 drum sources rendered correctly on repeated cold renders, after
+mute/unmute, after the online action, and after playback (identical drum RMS
+0.06803). Those tests support the project construction but do not prove what put
+the earlier session into its failing state.
+
+The MCP does not automatically play or reload projects. Verify important parts in
+the actual full export: file validity, no clipping, and `check_project` success do
+not prove a complete audible mix. Missing files, intentionally offline FX, and
+plugin-specific initialization problems are not repaired by bringing media online.
 
 ### Live regression check
 
 `python scripts/smoke_live.py --output /path/to/test-output --sample /path/to/kick.wav`
 opens a disposable REAPER tab, tests MIDI at a nonzero timeline position, Save As,
 copy, marker names, parameter batches, stems followed by a full render, and measures
-separate synth/drum windows. It restores the original project tab in `finally`.
+separate synth/drum windows. Media is deliberately set offline before the stems
+and again before the full mix to regress silent exports. It restores the original project tab in `finally`.
 Run only when REAPER is available and no other actor is editing it. Artifacts and
 the machine-readable result remain in the supplied output directory.
 
